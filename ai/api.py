@@ -1,3 +1,5 @@
+import json
+import os
 import time
 from typing import Any, Optional
 from datetime import datetime
@@ -24,10 +26,14 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
     ],
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?",
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +45,18 @@ app.add_middleware(
 # ============================================================
 
 registered_people: list[dict[str, Any]] = []
+
+# Persistencia local de embeddings faciales.
+# Esta capa mantiene los registros después de reiniciar FastAPI.
+# Más adelante puede migrarse a MySQL/SAP para producción.
+from facial_database import (
+    init_database,
+    save_embedding,
+    get_all_embeddings,
+    delete_embedding,
+)
+
+init_database()
 
 
 # ============================================================
@@ -93,7 +111,6 @@ recognizer.prepare(
 
 print("Reconocedor facial listo.")
 print("=" * 60)
-
 
 # ============================================================
 # DECODIFICAR IMAGEN
@@ -361,6 +378,50 @@ def get_embedding(face):
     embedding = embedding / norm
 
     return embedding
+
+
+# ============================================================
+# CARGAR EMBEDDINGS PERSISTENTES
+# ============================================================
+
+def load_registered_people():
+    """Carga los embeddings guardados en SQLite al iniciar FastAPI."""
+    global registered_people
+
+    registered_people.clear()
+
+    records = get_all_embeddings()
+
+    for record in records:
+        try:
+            embedding = np.asarray(
+                json.loads(record["embedding"]),
+                dtype=np.float32,
+            )
+
+            registered_people.append(
+                {
+                    "person_id": str(record["person_id"]),
+                    "name": str(record["name"]),
+                    "person_type": str(record["person_type"]),
+                    "embedding": embedding.tolist(),
+                }
+            )
+
+        except Exception as error:
+            print(
+                f"[WARNING] No se pudo cargar el rostro "
+                f"{record.get('person_id')}: {error}"
+            )
+
+    print(
+        f"[DATABASE] {len(registered_people)} "
+        f"rostros cargados."
+    )
+
+
+# Recuperar embeddings después de definir la función de carga.
+load_registered_people()
 
 
 # ============================================================
@@ -656,6 +717,14 @@ async def register_face(
                 embedding.tolist()
             ),
         }
+
+        # Guardar embedding de forma persistente.
+        save_embedding(
+            person_id=str(person_id),
+            name=str(name),
+            person_type=str(person_type),
+            embedding=json.dumps(embedding.tolist()),
+        )
 
         registered_people.append(
             person
@@ -1031,9 +1100,12 @@ def delete_registered_person(
         != person_id
     ]
 
+    deleted_from_database = delete_embedding(person_id)
+
     if (
         len(registered_people)
         == original_count
+        and not deleted_from_database
     ):
 
         return {
