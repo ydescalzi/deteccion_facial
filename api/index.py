@@ -1137,7 +1137,7 @@ def delete_registered_person(
 # del SAP real antes de conectar MySQL.
 #
 try:
-    from sap_mock_service import (
+    from ai.sap_mock_service import (
         obtener_persona, obtener_estudiante, obtener_docente,
         listar_estudiantes, listar_docentes, listar_modulos,
         listar_secciones, listar_eventos, listar_ofertas,
