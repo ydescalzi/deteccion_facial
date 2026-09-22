@@ -49,7 +49,7 @@ registered_people: list[dict[str, Any]] = []
 # Persistencia local de embeddings faciales.
 # Esta capa mantiene los registros después de reiniciar FastAPI.
 # Más adelante puede migrarse a MySQL/SAP para producción.
-from facial_database import (
+from api.facial_database import (
     init_database,
     save_embedding,
     get_all_embeddings,
